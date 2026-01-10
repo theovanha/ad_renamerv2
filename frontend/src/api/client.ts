@@ -1,10 +1,11 @@
-import type { AnalyzeRequest, ConfigResponse, GroupedAssets, AdGroup, ExportRow, ProcessedAsset } from '../types';
+import type { AnalyzeRequest, ConfigResponse, GroupedAssets, AdGroup, ExportRow, ProcessedAsset, AuthStatus, RenameResult } from '../types';
 
 const API_BASE = '/api';
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {
     ...options,
+    credentials: 'include', // Include cookies for auth
     headers: {
       'Content-Type': 'application/json',
       ...options?.headers,
@@ -130,6 +131,69 @@ export const api = {
     return fetchJson<GroupedAssets>(`${API_BASE}/groups/regroup`, {
       method: 'PUT',
       body: JSON.stringify({ asset_id: assetId, target_group_id: targetGroupId }),
+    });
+  },
+
+  // ===== Auth API =====
+
+  /**
+   * Get current auth status
+   */
+  async getAuthStatus(): Promise<AuthStatus> {
+    return fetchJson<AuthStatus>(`${API_BASE}/auth/me`);
+  },
+
+  /**
+   * Start Google OAuth login flow
+   */
+  login(): void {
+    window.location.href = `${API_BASE}/auth/login`;
+  },
+
+  /**
+   * Log out and clear session
+   */
+  async logout(): Promise<void> {
+    await fetch(`${API_BASE}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+  },
+
+  // ===== Drive Operations =====
+
+  /**
+   * Rename files in Google Drive to their new names
+   */
+  async renameFilesInDrive(): Promise<RenameResult> {
+    return fetchJson<RenameResult>(`${API_BASE}/export/rename`, {
+      method: 'POST',
+    });
+  },
+
+  /**
+   * Get debug analysis info
+   */
+  async getDebugAnalysis(): Promise<unknown> {
+    return fetchJson<unknown>(`${API_BASE}/debug/analysis`);
+  },
+
+  // ===== Copy Doc Templates =====
+
+  /**
+   * Get available copy doc templates
+   */
+  async getCopyDocTemplates(): Promise<{ templates: Array<{ id: string; file_id: string; name: string }> }> {
+    return fetchJson<{ templates: Array<{ id: string; file_id: string; name: string }> }>(`${API_BASE}/copy-doc/templates`);
+  },
+
+  /**
+   * Copy a doc template to the current Drive folder
+   */
+  async copyDocToFolder(templateId: string): Promise<{ success: boolean; file_id: string; name: string; url: string }> {
+    return fetchJson<{ success: boolean; file_id: string; name: string; url: string }>(`${API_BASE}/copy-doc`, {
+      method: 'POST',
+      body: JSON.stringify({ template_id: templateId }),
     });
   },
 };

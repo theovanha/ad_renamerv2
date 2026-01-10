@@ -1,8 +1,13 @@
 """Application configuration and settings."""
 
+import os
 from datetime import datetime
 from pathlib import Path
 from pydantic import BaseModel
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 
 class Settings(BaseModel):
@@ -25,6 +30,23 @@ class Settings(BaseModel):
     
     # OCR overlap threshold for grouping
     ocr_overlap_threshold: float = 0.5  # 50% text overlap
+    
+    # Google OAuth Settings
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
+    google_client_secret: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+    google_redirect_uri: str = os.getenv("GOOGLE_REDIRECT_URI", "http://localhost:8000/api/auth/callback")
+    google_picker_api_key: str = os.getenv("GOOGLE_PICKER_API_KEY", "")
+    
+    # Session settings
+    session_secret: str = os.getenv("SESSION_SECRET", "vanha-secret-change-me")
+    
+    # OAuth scopes (include openid as Google adds it automatically)
+    google_scopes: list[str] = [
+        "openid",
+        "https://www.googleapis.com/auth/drive",
+        "https://www.googleapis.com/auth/userinfo.email",
+        "https://www.googleapis.com/auth/userinfo.profile",
+    ]
     
     @staticmethod
     def get_default_campaign() -> str:
@@ -64,3 +86,11 @@ CLIENT_OPTIONS = [
     "ClientB", 
     "ClientC",
 ]
+
+# Copy Doc Templates - Google Doc file IDs
+COPY_DOC_TEMPLATES = {
+    "template_1": "10DQcfWn3xV32g8TQBFNi9qYXXFZ-PFGx",
+    "template_2": "1MQM97S3klTm2XuQqZgpriX4VT_0oo1FS",
+    "template_3": "1CMNG-80mttkqOrkKXDLDq8b7uzz9-aH8",
+    "template_4": "1GocdJyjnbxr5Wa8AgP8XE-T7wPFu-hKx",
+}

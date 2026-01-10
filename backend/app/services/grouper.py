@@ -36,7 +36,7 @@ async def group_assets(
     used_assets: set[str] = set()
     
     # Determine campaign and date
-    campaign = user_inputs.campaign or settings.get_default_campaign()
+    campaign = user_inputs.campaign or ""  # Leave blank by default
     date = user_inputs.date or settings.get_default_date()
     
     current_ad_number = user_inputs.start_number

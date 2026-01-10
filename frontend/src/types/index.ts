@@ -112,3 +112,33 @@ export const ANGLE_OPTIONS = [
   'Brand',
   'Newness',
 ] as const;
+
+// Auth Types
+export interface UserInfo {
+  id: string;
+  email: string;
+  name: string;
+  picture?: string;
+}
+
+export interface AuthStatus {
+  authenticated: boolean;
+  user?: UserInfo;
+  picker_api_key?: string;
+  client_id?: string;
+}
+
+// Rename Types
+export interface RenameResultItem {
+  old_name: string;
+  new_name: string;
+  success: boolean;
+  error?: string;
+}
+
+export interface RenameResult {
+  total: number;
+  success: number;
+  failed: number;
+  results: RenameResultItem[];
+}

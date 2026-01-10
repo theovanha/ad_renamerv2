@@ -75,10 +75,13 @@ class AdGroup(BaseModel):
     
     def generate_filename(self) -> str:
         """Generate the standardized filename for this group."""
+        import re
         ad_num = f"{self.ad_number:03d}"
         
         # Build filename, omitting empty fields
-        parts = [ad_num, self.campaign]
+        parts = [ad_num]
+        if self.campaign:
+            parts.append(self.campaign)
         if self.product:
             parts.append(self.product)
         parts.append(self.format_token)
@@ -90,9 +93,11 @@ class AdGroup(BaseModel):
             parts.append(self.creator)
         if self.offer:
             parts.append("Offer")
-        parts.append(self.date)
+        if self.date:
+            parts.append(self.date)
         
-        return "_".join(parts)
+        # Join and remove any accidental double underscores
+        return re.sub(r'__+', '_', "_".join(parts))
 
 
 class GroupedAssets(BaseModel):

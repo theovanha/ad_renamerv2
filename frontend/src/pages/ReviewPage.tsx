@@ -1,8 +1,15 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import type { GroupedAssets, AdGroup } from '../types';
 import AssetTable from '../components/AssetTable';
+
+// Copy Doc Template type
+interface CopyDocTemplate {
+  id: string;
+  file_id: string;
+  name: string;
+}
 
 // Bulk apply toolbar component
 function BulkApplyToolbar({ 
@@ -21,8 +28,8 @@ function BulkApplyToolbar({
 
   return (
     <div className="bulk-toolbar">
-      <span className="bulk-label">Apply to all:</span>
-
+      {/* Starting Ad Number */}
+      <span className="bulk-label">Starting Ad #:</span>
       <div className="bulk-field">
         <input
           type="number"
@@ -30,15 +37,20 @@ function BulkApplyToolbar({
           onChange={e => setStartNumber(parseInt(e.target.value) || 1)}
           min={1}
           className="bulk-input bulk-input-number"
-          placeholder="Start #"
+          placeholder="1"
         />
         <button 
           className="bulk-btn"
           onClick={() => { onRenumber(startNumber); }}
         >
-          Renumber
+          Apply
         </button>
       </div>
+
+      <div className="bulk-divider"></div>
+
+      {/* Apply to all - Campaign, Product, Offer */}
+      <span className="bulk-label">Apply to all:</span>
       
       <div className="bulk-field">
         <input
@@ -99,7 +111,6 @@ export default function ReviewPage() {
   const [data, setData] = useState<GroupedAssets | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [exporting, setExporting] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [debugData, setDebugData] = useState<string>('');
   
@@ -147,17 +158,6 @@ export default function ReviewPage() {
     }
   };
 
-  const handleAssetUpdate = async (groupId: string, assetId: string, updates: { headline?: string; description?: string }) => {
-    try {
-      await api.updateAsset(groupId, assetId, updates);
-      // Refresh data
-      const newData = await api.getGroups();
-      setData(newData);
-    } catch (err) {
-      console.error('Failed to update asset:', err);
-    }
-  };
-
   const handleBulkApply = useCallback(async (field: string, value: string | boolean) => {
     if (!data) return;
     
@@ -198,14 +198,88 @@ export default function ReviewPage() {
     }
   }, []);
   
-  const handleExport = async () => {
-    setExporting(true);
+  const [renaming, setRenaming] = useState(false);
+  const [copyDocTemplates, setCopyDocTemplates] = useState<CopyDocTemplate[]>([]);
+  const [copyDocOpen, setCopyDocOpen] = useState(false);
+  const [copyingDoc, setCopyingDoc] = useState(false);
+  const copyDocRef = useRef<HTMLDivElement>(null);
+
+  // Load copy doc templates on mount
+  useEffect(() => {
+    api.getCopyDocTemplates()
+      .then(res => setCopyDocTemplates(res.templates))
+      .catch(err => console.error('Failed to load templates:', err));
+  }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (copyDocRef.current && !copyDocRef.current.contains(event.target as Node)) {
+        setCopyDocOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [copyProgress, setCopyProgress] = useState(0);
+
+  const showSuccess = (message: string) => {
+    setSuccessMessage(message);
+    setTimeout(() => setSuccessMessage(null), 3000);
+  };
+
+  const handleCopyDoc = async (templateId: string) => {
+    setCopyingDoc(true);
+    setCopyProgress(0);
+    setCopyDocOpen(false);
+    
+    // Simulate progress while waiting for API
+    const progressInterval = setInterval(() => {
+      setCopyProgress(prev => Math.min(prev + 15, 90));
+    }, 400);
+    
     try {
-      await api.exportCsv();
+      const result = await api.copyDocToFolder(templateId);
+      clearInterval(progressInterval);
+      setCopyProgress(100);
+      setTimeout(() => {
+        showSuccess(`✓ Added "${result.name}" to folder`);
+        setCopyingDoc(false);
+        setCopyProgress(0);
+      }, 200);
     } catch (err) {
-      alert('Export failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      clearInterval(progressInterval);
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      showSuccess(`✗ Failed: ${message}`);
+      setCopyingDoc(false);
+      setCopyProgress(0);
+    }
+  };
+  
+  const handleRenameInDrive = async () => {
+    if (!confirm('This will rename all files in Google Drive. Are you sure?')) {
+      return;
+    }
+    
+    setRenaming(true);
+    try {
+      const result = await api.renameFilesInDrive();
+      if (result.failed > 0) {
+        showSuccess(`✓ Renamed ${result.success}/${result.total} files (${result.failed} failed)`);
+      } else {
+        showSuccess(`✓ Renamed all ${result.total} files`);
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Unknown error';
+      if (message.includes('only works with Google Drive')) {
+        showSuccess('✗ Rename only works with Google Drive');
+      } else {
+        showSuccess(`✗ Rename failed: ${message}`);
+      }
     } finally {
-      setExporting(false);
+      setRenaming(false);
     }
   };
   
@@ -273,33 +347,95 @@ export default function ReviewPage() {
   
   return (
     <div className="review-page">
-      <div className="review-header">
-        <div className="review-title">
-          <h2>Review Assets</h2>
-          <p>
-            {totalAssets} asset{totalAssets !== 1 ? 's' : ''} in {data.groups.length} group{data.groups.length !== 1 ? 's' : ''}
-          </p>
+      {successMessage && (
+        <div className="success-toast">{successMessage}</div>
+      )}
+      
+      <div className="review-top-row">
+        <div className="top-left">
+          <button className="btn-home" onClick={() => navigate('/setup')} title="Back to Home">
+            ← Home
+          </button>
+          <span className="mini-brand">VANHA AD RENAMER</span>
         </div>
+      </div>
+      
+      <div className="review-actions-bar">
+        <span className="asset-count">
+          {totalAssets} asset{totalAssets !== 1 ? 's' : ''} in {data.groups.length} group{data.groups.length !== 1 ? 's' : ''}
+        </span>
         
         <div className="review-actions">
+          <button 
+            className="btn-copy"
+            onClick={() => {
+              const adNames = sortedGroups.map(group => {
+                const adNum = String(group.ad_number).padStart(3, '0');
+                const parts = [adNum];
+                if (group.campaign) parts.push(group.campaign);
+                if (group.product) parts.push(group.product);
+                parts.push(group.format_token);
+                if (group.angle) parts.push(group.angle);
+                if (group.hook) parts.push(group.hook);
+                if (group.creator) parts.push(group.creator);
+                if (group.offer) parts.push('Offer');
+                if (group.date) parts.push(group.date);
+                return parts.join('_').replace(/__+/g, '_');
+              }).join('\n');
+              navigator.clipboard.writeText(adNames);
+              showSuccess(`✓ Copied ${sortedGroups.length} ad names`);
+            }}
+            title="Copy all ad names (one per line for Google Sheets)"
+          >
+            📋 Copy Ad Names
+          </button>
+          
           <button 
             className={`btn-debug ${isRecording ? 'recording' : ''}`} 
             onClick={handleToggleRecording}
           >
-            {isRecording ? '⏹ Stop Recording' : '🔴 Record Debug'}
-          </button>
-          
-          <button className="btn-secondary" onClick={() => navigate('/')}>
-            New Analysis
+            {isRecording ? '⏹ Stop' : '🔴 Debug'}
           </button>
           
           <button
-            className="btn-success"
-            onClick={handleExport}
-            disabled={exporting}
+            className="btn-drive"
+            onClick={handleRenameInDrive}
+            disabled={renaming}
+            title="Rename files directly in Google Drive"
           >
-            {exporting ? 'Exporting...' : 'Export CSV'}
+            {renaming ? 'Renaming...' : '📁 Rename in Drive'}
           </button>
+
+          {/* Copy Doc dropdown */}
+          <div className="copy-doc-dropdown" ref={copyDocRef}>
+            <button
+              className="btn-copy-doc"
+              onClick={() => setCopyDocOpen(!copyDocOpen)}
+              disabled={copyingDoc || copyDocTemplates.length === 0}
+              title="Add a copy doc template to the folder"
+            >
+              {copyingDoc ? (
+                <span className="copy-progress">
+                  <span className="mini-spinner"></span>
+                  {copyProgress}%
+                </span>
+              ) : '📄 Add Copy Doc ▾'}
+            </button>
+            {copyDocOpen && copyDocTemplates.length > 0 && (
+              <div className="copy-doc-menu">
+                {copyDocTemplates.map(template => (
+                  <button
+                    key={template.id}
+                    className="copy-doc-item"
+                    onClick={() => handleCopyDoc(template.id)}
+                    disabled={copyingDoc}
+                  >
+                    {template.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -334,7 +470,6 @@ export default function ReviewPage() {
       <AssetTable
         groups={sortedGroups}
         onUpdateGroup={handleGroupUpdate}
-        onUpdateAsset={handleAssetUpdate}
         onRegroupAsset={handleRegroupAsset}
       />
       
@@ -354,45 +489,84 @@ export default function ReviewPage() {
       
       <style>{`
         .review-page {
+          position: relative;
           max-width: 1600px;
           margin: 0 auto;
+          padding-top: var(--space-sm);
         }
-        
-        .review-header {
+
+        .review-top-row {
           display: flex;
-          align-items: flex-start;
+          align-items: center;
           justify-content: space-between;
-          margin-bottom: var(--space-lg);
-          flex-wrap: wrap;
+          margin-bottom: var(--space-sm);
+        }
+
+        .top-left {
+          display: flex;
+          align-items: center;
           gap: var(--space-md);
         }
         
-        .review-title h2 {
-          font-size: 1.5rem;
-          font-weight: 600;
-          margin-bottom: var(--space-xs);
+        .btn-home {
+          padding: 0.3rem 0.6rem;
+          font-size: 0.75rem;
+          background: transparent;
+          color: var(--text-muted);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-sm);
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+
+        .btn-home:hover {
+          color: var(--text-primary);
+          border-color: var(--text-secondary);
+        }
+
+        .mini-brand {
+          font-size: 0.7rem;
+          font-weight: 700;
+          letter-spacing: 0.1em;
+          color: var(--text-muted);
+          opacity: 0.6;
+        }
+
+        .review-actions-bar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: var(--space-sm);
+          padding: var(--space-xs) 0;
         }
         
-        .review-title p {
+        .asset-count {
           color: var(--text-secondary);
-          font-size: 0.875rem;
+          font-size: 0.8rem;
         }
         
         .review-actions {
           display: flex;
           align-items: center;
-          gap: var(--space-md);
+          gap: var(--space-sm);
         }
         .bulk-toolbar {
           display: flex;
           align-items: center;
-          gap: var(--space-lg);
+          gap: var(--space-md);
           padding: var(--space-md) var(--space-lg);
           background: var(--bg-secondary);
           border: 1px solid var(--border-color);
           border-radius: var(--radius-md);
           margin-bottom: var(--space-md);
           flex-wrap: wrap;
+        }
+
+        .bulk-divider {
+          width: 1px;
+          height: 28px;
+          background: var(--border-color);
+          margin: 0 var(--space-md);
         }
 
         .bulk-label {
@@ -625,6 +799,98 @@ export default function ReviewPage() {
         .error-page p, .empty-page p {
           color: var(--text-secondary);
           margin-bottom: var(--space-lg);
+        }
+
+        /* Copy Doc Dropdown */
+        .copy-doc-dropdown {
+          position: relative;
+        }
+
+        .copy-progress {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .mini-spinner {
+          width: 12px;
+          height: 12px;
+          border: 2px solid rgba(255,255,255,0.3);
+          border-top-color: white;
+          border-radius: 50%;
+          animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+
+        .copy-doc-menu {
+          position: absolute;
+          top: 100%;
+          right: 0;
+          margin-top: 4px;
+          min-width: 200px;
+          background: var(--bg-secondary);
+          border: 1px solid var(--border-color);
+          border-radius: var(--radius-md);
+          box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+          z-index: 100;
+          overflow: hidden;
+        }
+
+        .copy-doc-item {
+          display: block;
+          width: 100%;
+          padding: 0.6rem 1rem;
+          font-size: 0.8rem;
+          text-align: left;
+          background: transparent;
+          color: var(--text-primary);
+          border: none;
+          cursor: pointer;
+          transition: background 0.15s;
+        }
+
+        .copy-doc-item:hover:not(:disabled) {
+          background: var(--bg-tertiary);
+        }
+
+        .copy-doc-item:not(:last-child) {
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .copy-doc-item:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        /* Success Toast */
+        .success-toast {
+          position: fixed;
+          top: var(--space-lg);
+          right: var(--space-lg);
+          padding: 0.6rem 1rem;
+          background: var(--bg-secondary);
+          border: 1px solid var(--accent-success);
+          border-radius: var(--radius-md);
+          color: var(--accent-success);
+          font-size: 0.8rem;
+          font-weight: 500;
+          z-index: 1000;
+          animation: slideIn 0.2s ease-out;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateX(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(0);
+          }
         }
       `}</style>
     </div>

@@ -10,11 +10,10 @@ interface AssetRow {
 interface AssetTableProps {
   groups: AdGroup[];
   onUpdateGroup: (groupId: string, updates: Partial<AdGroup>) => void;
-  onUpdateAsset?: (groupId: string, assetId: string, updates: { headline?: string; description?: string }) => void;
   onRegroupAsset?: (assetId: string, targetGroupId: string | null) => void;
 }
 
-export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onRegroupAsset }: AssetTableProps) {
+export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: AssetTableProps) {
   // Flatten groups into rows
   const rows: AssetRow[] = groups.flatMap(group =>
     group.assets.map((asset, assetIndex) => ({ asset, group, assetIndex }))
@@ -27,16 +26,18 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
   const generateAdName = (group: AdGroup): string => {
     const adNum = String(group.ad_number).padStart(3, '0');
     
-    const parts = [adNum, group.campaign];
+    const parts = [adNum];
+    if (group.campaign) parts.push(group.campaign);
     if (group.product) parts.push(group.product);
     parts.push(group.format_token);
     if (group.angle) parts.push(group.angle);
     if (group.hook) parts.push(group.hook);
     if (group.creator) parts.push(group.creator);
     if (group.offer) parts.push('Offer');
-    parts.push(group.date);
+    if (group.date) parts.push(group.date);
     
-    return parts.join('_');
+    // Join and remove any accidental double underscores
+    return parts.join('_').replace(/__+/g, '_');
   };
 
   // Generate per-asset new file name
@@ -52,15 +53,6 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
       onUpdateGroup(groupId, { [field]: value });
     },
     [onUpdateGroup]
-  );
-
-  const handleAssetFieldChange = useCallback(
-    (groupId: string, assetId: string, field: 'headline' | 'description', value: string) => {
-      if (onUpdateAsset) {
-        onUpdateAsset(groupId, assetId, { [field]: value });
-      }
-    },
-    [onUpdateAsset]
   );
 
   const handleMoveAsset = useCallback(
@@ -106,6 +98,7 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
           <tr>
             <th className="th-move">Move</th>
             <th className="th-thumbnail">Thumbnail</th>
+            <th className="th-oldfile">Old File</th>
             <th className="th-dimensions">Dimensions</th>
             <th className="th-placement">Placement</th>
             <th className="th-format">Format</th>
@@ -116,15 +109,7 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
             <th className="th-creator">Creator</th>
             <th className="th-offer">Offer</th>
             <th className="th-newname">New Ad Name</th>
-            <th className="th-oldfile">Old File</th>
             <th className="th-newfile">New File</th>
-            <th className="th-copy-lg">Primary Text</th>
-            <th className="th-copy">Headline</th>
-            <th className="th-copy">Description</th>
-            <th className="th-copy-sm">CTA</th>
-            <th className="th-copy">URL</th>
-            <th className="th-copy">Media Buyer Notes</th>
-            <th className="th-copy">Client Notes</th>
           </tr>
         </thead>
         <tbody>
@@ -132,7 +117,6 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
             const isFirstInGroup = !seenGroups.has(row.group.id);
             seenGroups.add(row.group.id);
             const assetsInGroup = row.group.assets.length;
-            const isCarousel = row.group.group_type === 'carousel';
 
             return (
               <tr
@@ -185,6 +169,11 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
                   )}
                 </td>
 
+                {/* Old File Name */}
+                <td className="td-oldfile">
+                  <code className="filename-text">{row.asset.asset.name}</code>
+                </td>
+
                 {/* Dimensions */}
                 <td className="td-dimensions">
                   <span className="dimensions-text">
@@ -195,7 +184,7 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
                 {/* Placement */}
                 <td className="td-placement">
                   <span className={`badge ${getPlacementBadgeClass(row.asset.placement)}`}>
-                    {row.asset.placement}
+                    {row.asset.placement.toUpperCase()}
                   </span>
                 </td>
 
@@ -268,114 +257,10 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
                   </>
                 ) : null}
 
-                {/* Per-asset file names */}
-                <td className="td-oldfile">
-                  <code className="filename-text">{row.asset.asset.name}</code>
-                </td>
+                {/* New File Name */}
                 <td className="td-newfile">
                   <code className="filename-text">{generateNewFileName(row.group, row.asset)}</code>
                 </td>
-
-                {/* Copy fields - Primary Text is always per-group */}
-                {isFirstInGroup ? (
-                  <td className="td-copy-lg" rowSpan={assetsInGroup}>
-                    <textarea
-                      value={row.group.primary_text}
-                      onChange={e => handleFieldChange(row.group.id, 'primary_text', e.target.value)}
-                      placeholder="Primary text..."
-                      className="copy-textarea-lg"
-                      rows={6}
-                    />
-                  </td>
-                ) : null}
-
-                {/* Headline - per-asset for carousels, per-group for others */}
-                {isCarousel ? (
-                  <td className="td-copy">
-                    <textarea
-                      value={row.asset.headline}
-                      onChange={e => handleAssetFieldChange(row.group.id, row.asset.asset.id, 'headline', e.target.value)}
-                      placeholder={`Card ${row.assetIndex + 1} headline...`}
-                      className="copy-textarea"
-                      rows={2}
-                    />
-                  </td>
-                ) : isFirstInGroup ? (
-                  <td className="td-copy" rowSpan={assetsInGroup}>
-                    <textarea
-                      value={row.group.headline}
-                      onChange={e => handleFieldChange(row.group.id, 'headline', e.target.value)}
-                      placeholder="Headline..."
-                      className="copy-textarea"
-                      rows={2}
-                    />
-                  </td>
-                ) : null}
-
-                {/* Description - per-asset for carousels, per-group for others */}
-                {isCarousel ? (
-                  <td className="td-copy">
-                    <textarea
-                      value={row.asset.description}
-                      onChange={e => handleAssetFieldChange(row.group.id, row.asset.asset.id, 'description', e.target.value)}
-                      placeholder={`Card ${row.assetIndex + 1} description...`}
-                      className="copy-textarea"
-                      rows={2}
-                    />
-                  </td>
-                ) : isFirstInGroup ? (
-                  <td className="td-copy" rowSpan={assetsInGroup}>
-                    <textarea
-                      value={row.group.description}
-                      onChange={e => handleFieldChange(row.group.id, 'description', e.target.value)}
-                      placeholder="Description..."
-                      className="copy-textarea"
-                      rows={2}
-                    />
-                  </td>
-                ) : null}
-
-                {/* CTA, URL, Comments - always per-group */}
-                {isFirstInGroup ? (
-                  <>
-                    <td className="td-copy-sm" rowSpan={assetsInGroup}>
-                      <input
-                        type="text"
-                        value={row.group.cta}
-                        onChange={e => handleFieldChange(row.group.id, 'cta', e.target.value)}
-                        placeholder="Shop Now"
-                        className="table-input"
-                      />
-                    </td>
-                    <td className="td-copy" rowSpan={assetsInGroup}>
-                      <input
-                        type="text"
-                        value={row.group.url}
-                        onChange={e => handleFieldChange(row.group.id, 'url', e.target.value)}
-                        placeholder="https://..."
-                        className="table-input"
-                      />
-                    </td>
-                    <td className="td-copy" rowSpan={assetsInGroup}>
-                      <textarea
-                        value={row.group.comment_media_buyer}
-                        onChange={e => handleFieldChange(row.group.id, 'comment_media_buyer', e.target.value)}
-                        placeholder="Notes for media buyer..."
-                        className="copy-textarea"
-                        rows={3}
-                      />
-                    </td>
-                    <td className="td-copy" rowSpan={assetsInGroup}>
-                      <textarea
-                        value={row.group.comment_client}
-                        onChange={e => handleFieldChange(row.group.id, 'comment_client', e.target.value)}
-                        placeholder="Notes for client..."
-                        className="copy-textarea"
-                        rows={3}
-                      />
-                    </td>
-                  </>
-                ) : null}
               </tr>
             );
           })}
@@ -656,8 +541,8 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
         }
 
         .badge-placement-feed {
-          background: rgba(88, 166, 255, 0.2);
-          color: var(--accent-primary);
+          background: rgba(34, 211, 238, 0.2);
+          color: #22d3ee;
         }
 
         .badge-placement-unknown {
@@ -710,8 +595,10 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
         .newname-preview {
           display: block;
           font-family: var(--font-mono);
-          font-size: 0.65rem;
-          color: var(--accent-primary);
+          font-size: 0.7rem;
+          font-weight: 600;
+          color: #4ade80;
+          letter-spacing: 0.01em;
           background: rgba(88, 166, 255, 0.1);
           padding: 0.35rem 0.5rem;
           border-radius: var(--radius-sm);
@@ -728,78 +615,12 @@ export default function AssetTable({ groups, onUpdateGroup, onUpdateAsset, onReg
         }
 
         .td-newfile .filename-text {
-          color: var(--accent-secondary);
-        }
-
-        /* Copy textarea fields */
-        .th-copy {
-          min-width: 180px;
-        }
-
-        .th-copy-lg {
-          min-width: 360px;
-        }
-
-        .th-copy-sm {
-          min-width: 100px;
-        }
-
-        .td-copy, .td-copy-sm, .td-copy-lg {
-          white-space: normal !important;
-          vertical-align: top;
-        }
-
-        .copy-textarea {
-          width: 100%;
-          min-width: 160px;
-          padding: 0.5rem;
+          color: #4ade80;
+          font-weight: 600;
           font-size: 0.7rem;
-          font-family: var(--font-sans);
-          line-height: 1.5;
-          background: var(--bg-primary);
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-sm);
-          color: var(--text-primary);
-          resize: vertical;
-          min-height: 60px;
+          letter-spacing: 0.01em;
         }
 
-        .copy-textarea-lg {
-          width: 100%;
-          min-width: 340px;
-          padding: 0.5rem;
-          font-size: 0.7rem;
-          font-family: var(--font-sans);
-          line-height: 1.5;
-          background: var(--bg-primary);
-          border: 1px solid var(--border-color);
-          border-radius: var(--radius-sm);
-          color: var(--text-primary);
-          resize: vertical;
-          min-height: 90px;
-        }
-
-        .copy-textarea-lg:focus {
-          outline: none;
-          border-color: var(--accent-primary);
-          box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
-        }
-
-        .copy-textarea-lg::placeholder {
-          color: var(--text-muted);
-          font-size: 0.65rem;
-        }
-
-        .copy-textarea:focus {
-          outline: none;
-          border-color: var(--accent-primary);
-          box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
-        }
-
-        .copy-textarea::placeholder {
-          color: var(--text-muted);
-          font-size: 0.65rem;
-        }
       `}</style>
     </div>
   );

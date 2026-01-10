@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
-from app.routers import pipeline, export
+from app.routers import pipeline, export, auth
 from app.config import settings
 
 app = FastAPI(
@@ -30,6 +30,7 @@ settings.temp_dir.mkdir(parents=True, exist_ok=True)
 app.mount("/temp", StaticFiles(directory=str(settings.temp_dir)), name="temp")
 
 # Include routers
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(pipeline.router, prefix="/api", tags=["pipeline"])
 app.include_router(export.router, prefix="/api", tags=["export"])
 
@@ -46,7 +47,7 @@ async def get_config():
     from app.config import ANGLE_OPTIONS, CLIENT_OPTIONS
     
     return {
-        "default_campaign": settings.get_default_campaign(),
+        "default_campaign": "",  # Blank by default
         "default_date": settings.get_default_date(),
         "default_start_number": settings.default_start_number,
         "angle_options": ANGLE_OPTIONS,

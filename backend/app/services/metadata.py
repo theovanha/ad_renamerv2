@@ -95,6 +95,7 @@ async def _extract_video_metadata(path: Path) -> AssetMetadata:
 
 async def _extract_video_metadata_macos(path: Path) -> AssetMetadata:
     """Extract video metadata using macOS mdls command as fallback."""
+    # First try mdls (works on local indexed files)
     try:
         cmd = [
             "mdls",
@@ -136,6 +137,11 @@ async def _extract_video_metadata_macos(path: Path) -> AssetMetadata:
     except Exception as e:
         print(f"macOS metadata extraction failed: {e}")
     
+    # Try Python MP4 parser for temp/unindexed files
+    metadata = await _parse_mp4_dimensions(path)
+    if metadata:
+        return metadata
+    
     # Final fallback - default dimensions
     print(f"Warning: Could not determine video dimensions for: {path.name}")
     return AssetMetadata(
@@ -144,3 +150,62 @@ async def _extract_video_metadata_macos(path: Path) -> AssetMetadata:
         duration=15.0,
         aspect_ratio=1080 / 1920,
     )
+
+
+async def _parse_mp4_dimensions(path: Path) -> Optional[AssetMetadata]:
+    """Parse MP4/MOV file to extract video dimensions using pure Python."""
+    import struct
+    
+    try:
+        with open(path, 'rb') as f:
+            # Read the file to find the 'tkhd' (track header) box
+            data = f.read()
+            
+            # Look for 'moov' box first
+            moov_pos = data.find(b'moov')
+            if moov_pos == -1:
+                return None
+            
+            # Search for 'tkhd' box within moov
+            tkhd_pos = data.find(b'tkhd', moov_pos)
+            if tkhd_pos == -1:
+                return None
+            
+            # tkhd structure: version(1) + flags(3) + ... + width(4) + height(4) at fixed offsets
+            # Version 0: width/height at offset 76-84 from box start
+            # Version 1: width/height at offset 88-96 from box start
+            
+            # Get the box start (4 bytes before 'tkhd')
+            box_start = tkhd_pos - 4
+            version = data[tkhd_pos + 4]
+            
+            if version == 0:
+                # Version 0: dimensions at offset 76 from content start (tkhd_pos + 4)
+                dim_offset = tkhd_pos + 4 + 76  # = tkhd_pos + 80
+            else:
+                # Version 1: dimensions at offset 88 from content start (tkhd_pos + 4)
+                dim_offset = tkhd_pos + 4 + 88  # = tkhd_pos + 92
+            
+            if dim_offset + 8 > len(data):
+                return None
+            
+            # Width and height are stored as fixed-point 16.16 (4 bytes each)
+            width_raw = struct.unpack('>I', data[dim_offset:dim_offset+4])[0]
+            height_raw = struct.unpack('>I', data[dim_offset+4:dim_offset+8])[0]
+            
+            # Convert from fixed-point 16.16 to integer
+            width = width_raw >> 16
+            height = height_raw >> 16
+            
+            if width > 0 and height > 0:
+                print(f"Parsed MP4 dimensions: {path.name} ({width}x{height})")
+                return AssetMetadata(
+                    width=width,
+                    height=height,
+                    duration=None,
+                    aspect_ratio=width / height,
+                )
+    except Exception as e:
+        print(f"MP4 parsing failed for {path.name}: {e}")
+    
+    return None

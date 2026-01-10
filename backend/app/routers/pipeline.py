@@ -2,24 +2,30 @@
 
 import uuid
 from typing import Optional
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Cookie, Response
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+import io
 
 from app.models.asset import AssetType, ProcessedAsset
 from app.models.group import AdGroup, GroupedAssets, UserInputs, ConfidenceScores, GroupType
 from app.services.source.local import LocalFolderSource
+from app.services.source.google_drive import GoogleDriveSource, create_drive_source
 from app.services.metadata import extract_metadata
 from app.services.frames import extract_frames
 from app.services.ocr import extract_text
 from app.services.fingerprint import compute_fingerprint
 from app.services.grouper import group_assets
 from app.services.inference import infer_fields
+from app.routers.auth import get_credentials_from_session
+from app.config import COPY_DOC_TEMPLATES
 
 router = APIRouter()
 
 # In-memory storage for current session
 _current_groups: Optional[GroupedAssets] = None
 _current_inputs: Optional[UserInputs] = None
+_current_source: Optional[GoogleDriveSource] = None  # Keep reference for Drive operations
 
 
 class AnalyzeRequest(BaseModel):
@@ -80,12 +86,25 @@ class RenumberRequest(BaseModel):
     start_number: int = 1
 
 
+def _is_drive_url(path: str) -> bool:
+    """Check if the path is a Google Drive URL or folder ID."""
+    return "drive.google.com" in path or (
+        len(path) > 20 and 
+        not path.startswith("/") and 
+        not path.startswith("~") and
+        " " not in path
+    )
+
+
 @router.post("/analyze")
-async def analyze_assets(request: AnalyzeRequest) -> GroupedAssets:
+async def analyze_assets(
+    request: AnalyzeRequest,
+    session_id: Optional[str] = Cookie(default=None)
+) -> GroupedAssets:
     """Analyze assets in a folder and group them.
     
     This runs the full pipeline:
-    1. Load assets from folder
+    1. Load assets from folder (local or Google Drive)
     2. Extract metadata
     3. Extract video frames
     4. Run OCR
@@ -93,13 +112,36 @@ async def analyze_assets(request: AnalyzeRequest) -> GroupedAssets:
     6. Group assets
     7. Infer fields
     """
-    global _current_groups, _current_inputs
+    global _current_groups, _current_inputs, _current_source
     
     try:
-        # Create source
-        source = LocalFolderSource(request.folder_path)
+        # Determine source type
+        is_drive = _is_drive_url(request.folder_path)
+        print(f"[DEBUG] Analyzing path: {request.folder_path}, is_drive: {is_drive}")
+        
+        if is_drive:
+            # Google Drive source
+            credentials = get_credentials_from_session(session_id)
+            if not credentials:
+                raise HTTPException(
+                    status_code=401, 
+                    detail="Please sign in with Google to access Drive folders"
+                )
+            print(f"[DEBUG] Got credentials, creating Drive source")
+            source = create_drive_source(request.folder_path, credentials)
+            _current_source = source  # Keep reference for later operations
+            print(f"[DEBUG] Drive source created for folder: {source.folder_id}")
+        else:
+            # Local folder source
+            print(f"[DEBUG] Creating local source for: {request.folder_path}")
+            source = LocalFolderSource(request.folder_path)
+            _current_source = None
     except ValueError as e:
+        print(f"[DEBUG] ValueError: {e}")
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        print(f"[DEBUG] Exception creating source: {type(e).__name__}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to access folder: {str(e)}")
     
     # Store inputs
     _current_inputs = UserInputs(
@@ -120,20 +162,34 @@ async def analyze_assets(request: AnalyzeRequest) -> GroupedAssets:
     processed_assets: list[ProcessedAsset] = []
     
     for asset in assets:
-        # Extract metadata
-        metadata = await extract_metadata(asset)
+        # For Drive sources, download to local temp first
+        if asset.path.startswith("drive://"):
+            local_path = await source.get_asset_path(asset.id)
+            # Create a copy of the asset with the local path for processing
+            from app.models.asset import Asset
+            local_asset = Asset(
+                id=asset.id,
+                name=asset.name,
+                asset_type=asset.asset_type,
+                path=local_path,
+            )
+        else:
+            local_asset = asset
+        
+        # Extract metadata using local path
+        metadata = await extract_metadata(local_asset)
         placement = metadata.placement
         
         # Extract frames for videos
         frame_paths = []
-        if asset.asset_type == AssetType.VIDEO:
-            frame_paths = await extract_frames(asset)
+        if local_asset.asset_type == AssetType.VIDEO:
+            frame_paths = await extract_frames(local_asset)
         
         # Run OCR
-        ocr_text = await extract_text(asset, frame_paths)
+        ocr_text = await extract_text(local_asset, frame_paths)
         
         # Compute fingerprint
-        fingerprint = await compute_fingerprint(asset, frame_paths)
+        fingerprint = await compute_fingerprint(local_asset, frame_paths)
         
         # Get thumbnail URL
         thumbnail_url = await source.get_thumbnail_url(asset.id)
@@ -230,6 +286,37 @@ async def get_groups() -> GroupedAssets:
         raise HTTPException(status_code=404, detail="No analysis results. Run /analyze first.")
     
     return _current_groups
+
+
+@router.get("/drive/thumbnail/{file_id}")
+async def get_drive_thumbnail(
+    file_id: str,
+    session_id: Optional[str] = Cookie(default=None)
+):
+    """Proxy Drive thumbnails (requires auth)."""
+    global _current_source
+    
+    if _current_source is None:
+        raise HTTPException(status_code=404, detail="No Drive source available")
+    
+    credentials = get_credentials_from_session(session_id)
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    
+    try:
+        # Get thumbnail bytes from Drive
+        data = await _current_source.get_asset_bytes(file_id)
+        
+        # Detect content type from file info
+        file_info = await _current_source.get_file_info(file_id)
+        content_type = file_info.get("mimeType", "image/jpeg")
+        
+        return StreamingResponse(
+            io.BytesIO(data),
+            media_type=content_type
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # NOTE: These specific routes MUST come before /groups/{group_id} to avoid path conflicts
@@ -473,3 +560,109 @@ async def bulk_apply(request: BulkApplyRequest) -> GroupedAssets:
                 group.offer = request.value.lower() in ("yes", "true", "1")
     
     return _current_groups
+
+
+class CopyDocRequest(BaseModel):
+    """Request body for copying a doc template."""
+    template_id: str
+
+
+@router.get("/copy-doc/templates")
+async def get_copy_doc_templates(
+    session_id: Optional[str] = Cookie(default=None)
+):
+    """Get available copy doc templates with their names from Drive."""
+    credentials = get_credentials_from_session(session_id)
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Please sign in with Google first")
+    
+    from googleapiclient.discovery import build
+    
+    try:
+        service = build("drive", "v3", credentials=credentials)
+        templates = []
+        
+        for template_id, file_id in COPY_DOC_TEMPLATES.items():
+            try:
+                file_info = service.files().get(
+                    fileId=file_id,
+                    fields="id, name",
+                    supportsAllDrives=True
+                ).execute()
+                templates.append({
+                    "id": template_id,
+                    "file_id": file_id,
+                    "name": file_info.get("name", template_id)
+                })
+            except Exception as e:
+                print(f"[DEBUG] Failed to get template {file_id}: {e}")
+                templates.append({
+                    "id": template_id,
+                    "file_id": file_id,
+                    "name": f"Template ({template_id})"
+                })
+        
+        return {"templates": templates}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch templates: {str(e)}")
+
+
+@router.post("/copy-doc")
+async def copy_doc_to_folder(
+    request: CopyDocRequest,
+    session_id: Optional[str] = Cookie(default=None)
+):
+    """Copy a doc template to the current Drive folder."""
+    global _current_inputs, _current_source
+    
+    credentials = get_credentials_from_session(session_id)
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Please sign in with Google first")
+    
+    if request.template_id not in COPY_DOC_TEMPLATES:
+        raise HTTPException(status_code=400, detail=f"Unknown template: {request.template_id}")
+    
+    if not _current_source:
+        raise HTTPException(status_code=400, detail="No Drive folder selected. Please analyze a folder first.")
+    
+    template_file_id = COPY_DOC_TEMPLATES[request.template_id]
+    target_folder_id = _current_source.folder_id
+    
+    from googleapiclient.discovery import build
+    
+    try:
+        service = build("drive", "v3", credentials=credentials)
+        
+        # Get folder name
+        folder_info = service.files().get(
+            fileId=target_folder_id,
+            fields="name",
+            supportsAllDrives=True
+        ).execute()
+        folder_name = folder_info.get("name", "Folder")
+        
+        # Create copy name
+        new_name = f"{folder_name}_CopyDoc"
+        
+        # Copy the file to the target folder
+        copied_file = service.files().copy(
+            fileId=template_file_id,
+            body={
+                "name": new_name,
+                "parents": [target_folder_id]
+            },
+            supportsAllDrives=True
+        ).execute()
+        
+        file_id = copied_file.get("id")
+        file_url = f"https://docs.google.com/document/d/{file_id}/edit"
+        
+        return {
+            "success": True,
+            "file_id": file_id,
+            "name": new_name,
+            "url": file_url
+        }
+    except Exception as e:
+        print(f"[DEBUG] Failed to copy doc: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to copy document: {str(e)}")

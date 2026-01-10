@@ -111,7 +111,7 @@ def _infer_angle(text: str) -> tuple[str, float]:
         Tuple of (angle name, confidence).
     """
     if not text:
-        return "ProductFocus", 0.3  # Default with low confidence
+        return "", 0.0  # Blank by default
     
     text_lower = text.lower()
     
@@ -129,8 +129,8 @@ def _infer_angle(text: str) -> tuple[str, float]:
         confidence = min(0.9, 0.3 + (scores[best_angle] * 0.15))
         return best_angle, confidence
     
-    # Default to ProductFocus
-    return "ProductFocus", 0.3
+    # Blank by default
+    return "", 0.0
 
 
 def _infer_offer(text: str) -> tuple[bool, float]:

@@ -175,6 +175,41 @@ button:disabled {
   opacity: 0.9;
 }
 
+.btn-copy {
+  background: linear-gradient(135deg, #8b5cf6, #a855f7);
+  color: white;
+  border: none;
+}
+
+.btn-copy:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-drive {
+  background: linear-gradient(135deg, #10b981, #14b8a6);
+  color: white;
+  border: none;
+}
+
+.btn-drive:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-copy-doc {
+  background: linear-gradient(135deg, #f59e0b, #f97316);
+  color: white;
+  border: none;
+}
+
+.btn-copy-doc:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.btn-copy-doc:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 /* Cards */
 .card {
   background: var(--bg-card);
