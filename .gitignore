@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+.env
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Build outputs
+frontend/dist/
+*.log
+
+# Test outputs
+test_assets/*.png
+test_assets/*.jpg
+test_assets/*.mp4
+
+# Temp files
+/tmp/
+*.tmp
+
+# Credentials (never commit)
+*.json
+!package.json
+!tsconfig*.json
+credentials/
+service-account*.json
