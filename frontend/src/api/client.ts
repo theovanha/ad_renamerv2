@@ -1,6 +1,7 @@
 import type { AnalyzeRequest, ConfigResponse, GroupedAssets, AdGroup, ExportRow, ProcessedAsset, AuthStatus, RenameResult } from '../types';
 
-const API_BASE = '/api';
+// Use environment variable for API base, fallback to /api for local dev with proxy
+const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const response = await fetch(url, {

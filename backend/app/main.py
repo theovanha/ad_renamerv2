@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -14,10 +15,21 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# CORS middleware for frontend
+# CORS middleware for frontend - allow configured origins plus localhost for dev
+allowed_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
+# Add production frontend URL from environment variable
+frontend_url = os.getenv("FRONTEND_URL")
+if frontend_url:
+    allowed_origins.append(frontend_url)
+    # Also allow without trailing slash
+    allowed_origins.append(frontend_url.rstrip("/"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

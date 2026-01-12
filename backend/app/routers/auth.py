@@ -1,5 +1,6 @@
 """Authentication routes for Google OAuth."""
 
+import os
 import json
 import secrets
 from typing import Optional
@@ -9,6 +10,9 @@ from pydantic import BaseModel
 
 from app.config import settings
 from app.services.google_auth import google_auth_service
+
+# Frontend URL for redirects - defaults to localhost for development
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
 
 router = APIRouter()
 
@@ -72,7 +76,7 @@ async def callback(code: str, state: Optional[str] = None, error: Optional[str] 
     """Handle Google OAuth callback."""
     if error:
         # Redirect to frontend with error
-        return RedirectResponse(url=f"http://localhost:5173/?auth_error={error}")
+        return RedirectResponse(url=f"{FRONTEND_URL}/?auth_error={error}")
     
     try:
         # Exchange code for tokens
@@ -86,13 +90,15 @@ async def callback(code: str, state: Optional[str] = None, error: Optional[str] 
         session_id = _create_session(token_data, user_info)
         
         # Redirect to frontend with session cookie
-        response = RedirectResponse(url="http://localhost:5173/")
+        response = RedirectResponse(url=f"{FRONTEND_URL}/")
+        # Use secure cookies in production (HTTPS)
+        is_production = not FRONTEND_URL.startswith("http://localhost")
         response.set_cookie(
             key="session_id",
             value=session_id,
             httponly=True,
-            secure=False,  # Set to True in production with HTTPS
-            samesite="lax",
+            secure=is_production,
+            samesite="none" if is_production else "lax",
             max_age=60 * 60 * 24 * 7,  # 7 days
         )
         
@@ -100,7 +106,7 @@ async def callback(code: str, state: Optional[str] = None, error: Optional[str] 
         
     except Exception as e:
         print(f"OAuth callback error: {e}")
-        return RedirectResponse(url=f"http://localhost:5173/?auth_error=callback_failed")
+        return RedirectResponse(url=f"{FRONTEND_URL}/?auth_error=callback_failed")
 
 
 @router.get("/me", response_model=AuthStatus)
