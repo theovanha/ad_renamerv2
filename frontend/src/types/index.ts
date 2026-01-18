@@ -29,6 +29,8 @@ export interface ProcessedAsset {
   // Per-asset copy fields (for carousel cards)
   headline: string;
   description: string;
+  // Custom filename override (user-edited)
+  custom_filename?: string;
 }
 
 // Group Types

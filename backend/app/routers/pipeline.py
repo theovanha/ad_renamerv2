@@ -15,7 +15,7 @@ from app.services.metadata import extract_metadata
 from app.services.frames import extract_frames
 from app.services.ocr import extract_text
 from app.services.fingerprint import compute_fingerprint
-from app.services.grouper import group_assets
+from app.services.grouper import group_assets, sort_assets_by_filename_number
 from app.services.inference import infer_fields
 from app.routers.auth import get_credentials_from_session
 from app.config import COPY_DOC_TEMPLATES
@@ -59,6 +59,7 @@ class UpdateAssetRequest(BaseModel):
     """Request body for updating per-asset fields (carousel cards)."""
     headline: Optional[str] = None
     description: Optional[str] = None
+    custom_filename: Optional[str] = None
 
 
 class BulkReplaceRequest(BaseModel):
@@ -79,11 +80,18 @@ class RegroupRequest(BaseModel):
     """Request body for regrouping an asset."""
     asset_id: str
     target_group_id: Optional[str] = None  # None = create new group
+    destination_index: Optional[int] = None  # Where to insert in target group
 
 
 class RenumberRequest(BaseModel):
     """Request body for renumbering groups."""
     start_number: int = 1
+
+
+class ReorderAssetRequest(BaseModel):
+    """Request body for reordering an asset within a group."""
+    asset_id: str
+    new_index: int
 
 
 def _is_drive_url(path: str) -> bool:
@@ -382,8 +390,14 @@ async def regroup_asset(request: RegroupRequest) -> GroupedAssets:
             source_group.assets.insert(asset_index, asset_to_move)
             return _current_groups
         
-        # Add asset to target group
-        target_group.assets.append(asset_to_move)
+        # Add asset to target group at specified position
+        if request.destination_index is not None:
+            # Insert at the specific position user dropped it
+            insert_idx = min(request.destination_index, len(target_group.assets))
+            target_group.assets.insert(insert_idx, asset_to_move)
+        else:
+            # No position specified, append to end
+            target_group.assets.append(asset_to_move)
         
         # Update target group type if needed (e.g., becomes carousel with 3+ assets)
         if len(target_group.assets) >= 3:
@@ -418,6 +432,8 @@ async def regroup_asset(request: RegroupRequest) -> GroupedAssets:
             all_square = all(0.95 <= a.metadata.aspect_ratio <= 1.05 for a in source_group.assets)
             if all_square:
                 source_group.group_type = GroupType.CAROUSEL
+                # Re-sort carousel assets by filename number for proper card ordering
+                source_group.assets = sort_assets_by_filename_number(source_group.assets)
             else:
                 source_group.group_type = GroupType.STANDARD
         elif len(source_group.assets) == 2:
@@ -479,9 +495,9 @@ async def update_group(group_id: str, request: UpdateGroupRequest) -> AdGroup:
     raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
 
 
-@router.put("/groups/{group_id}/assets/{asset_id}")
+@router.put("/groups/{group_id}/assets/{asset_id:path}")
 async def update_asset(group_id: str, asset_id: str, request: UpdateAssetRequest) -> ProcessedAsset:
-    """Update per-asset fields (headline/description for carousel cards)."""
+    """Update per-asset fields (headline/description/custom_filename)."""
     global _current_groups
     
     if _current_groups is None:
@@ -496,8 +512,45 @@ async def update_asset(group_id: str, asset_id: str, request: UpdateAssetRequest
                         group.assets[i].headline = request.headline
                     if request.description is not None:
                         group.assets[i].description = request.description
+                    if request.custom_filename is not None:
+                        # Empty string clears the override, use generated name
+                        group.assets[i].custom_filename = request.custom_filename if request.custom_filename else None
                     return group.assets[i]
             raise HTTPException(status_code=404, detail=f"Asset not found: {asset_id}")
+    
+    raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
+
+
+@router.put("/groups/{group_id}/reorder")
+async def reorder_asset(group_id: str, request: ReorderAssetRequest) -> AdGroup:
+    """Reorder an asset within a group (e.g., change carousel card order)."""
+    global _current_groups
+    
+    if _current_groups is None:
+        raise HTTPException(status_code=404, detail="No analysis results.")
+    
+    # Find the group
+    for group in _current_groups.groups:
+        if group.id == group_id:
+            # Find the asset's current index
+            current_index = None
+            for i, asset in enumerate(group.assets):
+                if asset.asset.id == request.asset_id:
+                    current_index = i
+                    break
+            
+            if current_index is None:
+                raise HTTPException(status_code=404, detail=f"Asset not found: {request.asset_id}")
+            
+            # Validate new index
+            if request.new_index < 0 or request.new_index >= len(group.assets):
+                raise HTTPException(status_code=400, detail=f"Invalid index: {request.new_index}")
+            
+            # Reorder: remove from current position and insert at new position
+            asset = group.assets.pop(current_index)
+            group.assets.insert(request.new_index, asset)
+            
+            return group
     
     raise HTTPException(status_code=404, detail=f"Group not found: {group_id}")
 

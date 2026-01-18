@@ -60,14 +60,15 @@ export const api = {
   },
 
   /**
-   * Update per-asset fields (for carousel cards)
+   * Update per-asset fields (for carousel cards or custom filename)
    */
   async updateAsset(
     groupId: string,
     assetId: string,
-    updates: { headline?: string; description?: string }
+    updates: { headline?: string; description?: string; custom_filename?: string }
   ): Promise<ProcessedAsset> {
-    return fetchJson<ProcessedAsset>(`${API_BASE}/groups/${groupId}/assets/${assetId}`, {
+    // URL-encode the asset ID since it may contain slashes (file paths)
+    return fetchJson<ProcessedAsset>(`${API_BASE}/groups/${groupId}/assets/${encodeURIComponent(assetId)}`, {
       method: 'PUT',
       body: JSON.stringify(updates),
     });
@@ -128,10 +129,24 @@ export const api = {
   /**
    * Move an asset to a different group or create a new group
    */
-  async regroupAsset(assetId: string, targetGroupId: string | null): Promise<GroupedAssets> {
+  async regroupAsset(assetId: string, targetGroupId: string | null, destinationIndex?: number): Promise<GroupedAssets> {
     return fetchJson<GroupedAssets>(`${API_BASE}/groups/regroup`, {
       method: 'PUT',
-      body: JSON.stringify({ asset_id: assetId, target_group_id: targetGroupId }),
+      body: JSON.stringify({ 
+        asset_id: assetId, 
+        target_group_id: targetGroupId,
+        destination_index: destinationIndex 
+      }),
+    });
+  },
+
+  /**
+   * Reorder an asset within its group (e.g., change carousel card order)
+   */
+  async reorderAsset(groupId: string, assetId: string, newIndex: number): Promise<AdGroup> {
+    return fetchJson<AdGroup>(`${API_BASE}/groups/${groupId}/reorder`, {
+      method: 'PUT',
+      body: JSON.stringify({ asset_id: assetId, new_index: newIndex }),
     });
   },
 

@@ -118,11 +118,13 @@ async def _detect_carousels(
     
     if 3 <= total_feeds <= 10 and largest_cluster < 3:
         # Treat all feeds as one carousel
+        # Sort by filename number for card ordering
+        sorted_feeds = sort_assets_by_filename_number(feeds)
         confidence = 0.3  # Low confidence since we're not using hash matching
         group = AdGroup(
             id=str(uuid.uuid4()),
             group_type=GroupType.CAROUSEL,
-            assets=feeds,
+            assets=sorted_feeds,
             ad_number=current_number,
             campaign=campaign,
             date=date,
@@ -134,13 +136,14 @@ async def _detect_carousels(
     
     for cluster in clusters:
         if 3 <= len(cluster) <= 10:
-            # This is a carousel
-            confidence = _calculate_group_confidence(cluster)
+            # This is a carousel - sort by filename number for card ordering
+            sorted_cluster = sort_assets_by_filename_number(cluster)
+            confidence = _calculate_group_confidence(sorted_cluster)
             
             group = AdGroup(
                 id=str(uuid.uuid4()),
                 group_type=GroupType.CAROUSEL,
-                assets=cluster,
+                assets=sorted_cluster,
                 ad_number=current_number,
                 campaign=campaign,
                 date=date,
@@ -210,14 +213,36 @@ async def _match_story_feed_pairs(
 
 
 def _extract_number_from_filename(filename: str) -> Optional[int]:
-    """Extract the primary number from a filename for pairing heuristics."""
+    """Extract the primary number from a filename for ordering.
+    
+    Prioritizes numbers at the start or end of filename (common patterns):
+    - '01_carousel.png' -> 1 (prefix)
+    - 'carousel_01.png' -> 1 (suffix)
+    - 'slide01.png' -> 1 (suffix, no separator)
+    - '01slide.png' -> 1 (prefix, no separator)
+    
+    Falls back to first number found if no clear prefix/suffix.
+    """
     import re
     # Remove extension
     name = filename.rsplit('.', 1)[0]
-    # Find all numbers in the filename
+    
+    # Try to find number at the START of filename (with optional separator)
+    prefix_match = re.match(r'^(\d+)', name)
+    if prefix_match:
+        return int(prefix_match.group(1))
+    
+    # Try to find number at the END of filename (with optional separator)
+    suffix_match = re.search(r'(\d+)$', name)
+    if suffix_match:
+        return int(suffix_match.group(1))
+    
+    # Fallback: find any number in the filename
     numbers = re.findall(r'\d+', name)
     if numbers:
-        return int(numbers[0])
+        # Prefer the last number (often the sequence number)
+        return int(numbers[-1])
+    
     return None
 
 
@@ -306,6 +331,26 @@ def _cluster_by_hash(assets: list[ProcessedAsset], threshold: int) -> list[list[
         clusters.append(cluster)
     
     return clusters
+
+
+def sort_assets_by_filename_number(assets: list[ProcessedAsset]) -> list[ProcessedAsset]:
+    """Sort assets by the number extracted from their filename.
+    
+    Used for carousel card ordering - Card01 goes to the asset with
+    the smallest filename number, Card02 to the next, etc.
+    
+    Assets without numbers are placed at the end in original order.
+    """
+    def sort_key(asset: ProcessedAsset) -> tuple[int, str]:
+        num = _extract_number_from_filename(asset.asset.name)
+        # Use a tuple: (has_number, number_or_999, filename)
+        # This ensures numbered files come first, sorted by number,
+        # and unnumbered files come last in alphabetical order
+        if num is not None:
+            return (0, num, asset.asset.name)
+        return (1, 999, asset.asset.name)
+    
+    return sorted(assets, key=sort_key)
 
 
 def _calculate_group_confidence(assets: list[ProcessedAsset]) -> float:

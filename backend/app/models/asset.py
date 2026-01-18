@@ -63,3 +63,6 @@ class ProcessedAsset(BaseModel):
     # Per-asset copy fields (used for carousel cards)
     headline: str = ""
     description: str = ""
+    
+    # Custom filename override (if user edits the generated name)
+    custom_filename: Optional[str] = None

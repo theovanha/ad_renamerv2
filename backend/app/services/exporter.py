@@ -4,14 +4,16 @@ import csv
 import io
 from typing import TextIO
 
-from app.models.group import AdGroup, ExportRow
-from app.services.namer import generate_filename
+from app.models.group import AdGroup, ExportRow, GroupType
+from app.services.namer import generate_filename, generate_carousel_filename
 
 
 def generate_export_rows(groups: list[AdGroup]) -> list[ExportRow]:
     """Generate export rows for all groups.
     
-    Each asset in each group gets one row with the group's new filename.
+    Each asset in each group gets one row with its new filename.
+    For carousels, each card gets a unique filename (0001_CAR_Card01.png, etc.)
+    For standard groups, all assets share the group filename.
     
     Args:
         groups: List of ad groups.
@@ -22,22 +24,41 @@ def generate_export_rows(groups: list[AdGroup]) -> list[ExportRow]:
     rows = []
     
     for group in groups:
-        new_name = generate_filename(group)
-        
-        for asset in group.assets:
-            row = ExportRow(
-                file_id=asset.asset.id,
-                old_name=asset.asset.name,
-                new_name=new_name,
-                group_id=group.id,
-                group_type=group.group_type.value,
-                placement_inferred=asset.placement.value,
-                confidence_group=round(group.confidence.group, 3),
-                confidence_product=round(group.confidence.product, 3),
-                confidence_angle=round(group.confidence.angle, 3),
-                confidence_offer=round(group.confidence.offer, 3),
-            )
-            rows.append(row)
+        if group.group_type == GroupType.CAROUSEL:
+            # Carousel: each card gets unique filename based on position
+            for card_index, asset in enumerate(group.assets, start=1):
+                new_name = generate_carousel_filename(group, asset, card_index)
+                row = ExportRow(
+                    file_id=asset.asset.id,
+                    old_name=asset.asset.name,
+                    new_name=new_name,
+                    group_id=group.id,
+                    group_type=group.group_type.value,
+                    placement_inferred=asset.placement.value,
+                    confidence_group=round(group.confidence.group, 3),
+                    confidence_product=round(group.confidence.product, 3),
+                    confidence_angle=round(group.confidence.angle, 3),
+                    confidence_offer=round(group.confidence.offer, 3),
+                )
+                rows.append(row)
+        else:
+            # Standard/Single: all assets share the group filename
+            new_name = generate_filename(group)
+            
+            for asset in group.assets:
+                row = ExportRow(
+                    file_id=asset.asset.id,
+                    old_name=asset.asset.name,
+                    new_name=new_name,
+                    group_id=group.id,
+                    group_type=group.group_type.value,
+                    placement_inferred=asset.placement.value,
+                    confidence_group=round(group.confidence.group, 3),
+                    confidence_product=round(group.confidence.product, 3),
+                    confidence_angle=round(group.confidence.angle, 3),
+                    confidence_offer=round(group.confidence.offer, 3),
+                )
+                rows.append(row)
     
     return rows
 

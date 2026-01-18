@@ -1,26 +1,22 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
+import { DragDropContext, Droppable, Draggable, DropResult } from '@hello-pangea/dnd';
 import type { AdGroup, ProcessedAsset } from '../types';
-
-interface AssetRow {
-  asset: ProcessedAsset;
-  group: AdGroup;
-  assetIndex: number;
-}
 
 interface AssetTableProps {
   groups: AdGroup[];
   onUpdateGroup: (groupId: string, updates: Partial<AdGroup>) => void;
-  onRegroupAsset?: (assetId: string, targetGroupId: string | null) => void;
+  onRegroupAsset?: (assetId: string, targetGroupId: string | null, destinationIndex?: number) => void;
+  onReorderAsset?: (groupId: string, assetId: string, newIndex: number) => void;
+  onUpdateAssetFilename?: (groupId: string, assetId: string, customFilename: string) => void;
 }
 
-export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: AssetTableProps) {
-  // Flatten groups into rows
-  const rows: AssetRow[] = groups.flatMap(group =>
-    group.assets.map((asset, assetIndex) => ({ asset, group, assetIndex }))
-  );
-
+export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset, onReorderAsset, onUpdateAssetFilename }: AssetTableProps) {
   // State for enlarged thumbnail preview
   const [previewImage, setPreviewImage] = useState<{ url: string; name: string } | null>(null);
+  
+  // State for inline filename editing
+  const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
 
   // Generate ad name preview (matches backend logic)
   const generateAdName = (group: AdGroup): string => {
@@ -41,12 +37,47 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
   };
 
   // Generate per-asset new file name
-  const generateNewFileName = (group: AdGroup, asset: ProcessedAsset): string => {
+  const generateNewFileName = (group: AdGroup, asset: ProcessedAsset, assetIndex: number): string => {
+    // If custom filename is set, use it
+    if (asset.custom_filename) {
+      return asset.custom_filename;
+    }
+    
+    const ext = asset.asset.name.split('.').pop() || 'jpg';
+    
+    // Carousel: {4-digit ad number}_CAR_Card{2-digit index}.{ext}
+    if (group.group_type === 'carousel') {
+      const adNum = String(group.ad_number).padStart(4, '0');
+      const cardNum = String(assetIndex + 1).padStart(2, '0');
+      return `${adNum}_CAR_Card${cardNum}.${ext}`;
+    }
+    
+    // Standard/Single: use full ad name format
     const adNum = String(group.ad_number).padStart(3, '0');
-    const ext = asset.asset.name.split('.').pop() || '';
-    // Backend sends asset_type as 'VID' or 'IMG' directly
     return `${adNum}_${asset.asset.asset_type}_${asset.placement}.${ext}`;
   };
+
+  // Build a set of duplicate filenames for highlighting
+  const duplicateFilenames = useMemo(() => {
+    const filenameCount = new Map<string, number>();
+    
+    // Count all filenames
+    for (const group of groups) {
+      for (let i = 0; i < group.assets.length; i++) {
+        const filename = generateNewFileName(group, group.assets[i], i);
+        filenameCount.set(filename, (filenameCount.get(filename) || 0) + 1);
+      }
+    }
+    
+    // Return set of filenames that appear more than once
+    const duplicates = new Set<string>();
+    for (const [filename, count] of filenameCount) {
+      if (count > 1) {
+        duplicates.add(filename);
+      }
+    }
+    return duplicates;
+  }, [groups]);
 
   const handleFieldChange = useCallback(
     (groupId: string, field: keyof AdGroup, value: string | boolean) => {
@@ -55,14 +86,35 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
     [onUpdateGroup]
   );
 
-  const handleMoveAsset = useCallback(
-    (assetId: string, targetGroupId: string | null) => {
-      if (onRegroupAsset) {
-        onRegroupAsset(assetId, targetGroupId);
-      }
-    },
-    [onRegroupAsset]
-  );
+  // Handle double-click to start editing filename
+  const handleFilenameDoubleClick = (assetId: string, currentFilename: string) => {
+    setEditingAssetId(assetId);
+    setEditValue(currentFilename);
+  };
+
+  // Handle saving edited filename
+  const handleFilenameSave = (groupId: string, assetId: string) => {
+    if (onUpdateAssetFilename && editValue.trim()) {
+      onUpdateAssetFilename(groupId, assetId, editValue.trim());
+    }
+    setEditingAssetId(null);
+    setEditValue('');
+  };
+
+  // Handle cancel editing
+  const handleFilenameCancel = () => {
+    setEditingAssetId(null);
+    setEditValue('');
+  };
+
+  // Handle key press in filename input
+  const handleFilenameKeyDown = (e: React.KeyboardEvent, groupId: string, assetId: string) => {
+    if (e.key === 'Enter') {
+      handleFilenameSave(groupId, assetId);
+    } else if (e.key === 'Escape') {
+      handleFilenameCancel();
+    }
+  };
 
   const getFormatBadgeClass = (format: string) => {
     switch (format) {
@@ -80,7 +132,34 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
     }
   };
 
-  const seenGroups = new Set<string>();
+  // Handle drag end
+  const handleDragEnd = useCallback((result: DropResult) => {
+    const { source, destination, draggableId } = result;
+    
+    // Dropped outside any droppable
+    if (!destination) return;
+    
+    const sourceGroupId = source.droppableId;
+    const destGroupId = destination.droppableId;
+    const assetId = draggableId;
+    
+    // Same position - no change
+    if (sourceGroupId === destGroupId && source.index === destination.index) {
+      return;
+    }
+    
+    // Reorder within same group
+    if (sourceGroupId === destGroupId) {
+      if (onReorderAsset) {
+        onReorderAsset(sourceGroupId, assetId, destination.index);
+      }
+    } else {
+      // Move to different group - pass destination index to place it where dropped
+      if (onRegroupAsset) {
+        onRegroupAsset(assetId, destGroupId, destination.index);
+      }
+    }
+  }, [onRegroupAsset, onReorderAsset]);
 
   return (
     <div className="asset-table-container">
@@ -93,188 +172,233 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
         </div>
       )}
 
-      <table className="asset-table">
-        <thead>
-          <tr>
-            <th className="th-move">Move</th>
-            <th className="th-thumbnail">Thumbnail</th>
-            <th className="th-oldfile">Old File</th>
-            <th className="th-dimensions">Dimensions</th>
-            <th className="th-placement">Placement</th>
-            <th className="th-format">Format</th>
-            <th className="th-campaign">Campaign</th>
-            <th className="th-product">Product</th>
-            <th className="th-angle">Angle</th>
-            <th className="th-hook">Hook</th>
-            <th className="th-creator">Creator</th>
-            <th className="th-offer">Offer</th>
-            <th className="th-newname">New Ad Name</th>
-            <th className="th-newfile">New File</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const isFirstInGroup = !seenGroups.has(row.group.id);
-            seenGroups.add(row.group.id);
-            const assetsInGroup = row.group.assets.length;
+      <DragDropContext onDragEnd={handleDragEnd}>
+        {/* Header row */}
+        <div className="table-header">
+          <div className="th-cell th-drag"></div>
+          <div className="th-cell th-thumbnail">Thumb</div>
+          <div className="th-cell th-oldfile">Old File</div>
+          <div className="th-cell th-dimensions">Dimensions</div>
+          <div className="th-cell th-placement">Placement</div>
+          <div className="th-cell th-format">Format</div>
+          <div className="th-cell th-campaign">Campaign</div>
+          <div className="th-cell th-product">Product</div>
+          <div className="th-cell th-angle">Angle</div>
+          <div className="th-cell th-hook">Hook</div>
+          <div className="th-cell th-creator">Creator</div>
+          <div className="th-cell th-offer">Offer</div>
+          <div className="th-cell th-newname">New Ad Name</div>
+          <div className="th-cell th-newfile">New File</div>
+        </div>
 
-            return (
-              <tr
-                key={`${row.group.id}-${row.asset.asset.id}`}
-                className={`asset-row ${isFirstInGroup ? 'group-start' : 'group-continue'}`}
-              >
-                {/* Move dropdown */}
-                <td className="td-move">
-                  <select
-                    className="move-select"
-                    value=""
-                    onChange={e => {
-                      const value = e.target.value;
-                      if (value === 'new') {
-                        handleMoveAsset(row.asset.asset.id, null);
-                      } else if (value) {
-                        handleMoveAsset(row.asset.asset.id, value);
-                      }
-                    }}
-                  >
-                    <option value="">⋮⋮</option>
-                    {groups
-                      .filter(g => g.id !== row.group.id)
-                      .map(g => (
-                        <option key={g.id} value={g.id}>
-                          → Ad {g.ad_number}
-                        </option>
-                      ))
-                    }
-                    <option value="new">+ New group</option>
-                  </select>
-                </td>
+        {/* Groups */}
+        <div className="table-body">
+          {groups.map((group) => (
+            <Droppable droppableId={group.id} key={group.id}>
+              {(provided, snapshot) => (
+                <div
+                  ref={provided.innerRef}
+                  {...provided.droppableProps}
+                  className={`group-section ${snapshot.isDraggingOver ? 'drag-over' : ''}`}
+                >
+                  {/* Group header indicator */}
+                  <div className="group-header-bar">
+                    <span className="group-badge">Ad #{String(group.ad_number).padStart(3, '0')}</span>
+                    <span className="group-type-badge">{group.group_type}</span>
+                    <span className="group-count">{group.assets.length} asset{group.assets.length !== 1 ? 's' : ''}</span>
+                  </div>
+                  
+                  {group.assets.map((asset, assetIndex) => {
+                    const isFirstInGroup = assetIndex === 0;
+                    
+                    return (
+                      <Draggable
+                        key={asset.asset.id}
+                        draggableId={asset.asset.id}
+                        index={assetIndex}
+                      >
+                        {(provided, snapshot) => (
+                          <div
+                            ref={provided.innerRef}
+                            {...provided.draggableProps}
+                            className={`asset-row ${snapshot.isDragging ? 'dragging' : ''} ${isFirstInGroup ? 'group-start' : 'group-continue'}`}
+                            style={{
+                              ...provided.draggableProps.style,
+                            }}
+                          >
+                            {/* Drag handle */}
+                            <div 
+                              className="td-cell td-drag"
+                              {...provided.dragHandleProps}
+                            >
+                              <div className="drag-handle">
+                                <span></span>
+                                <span></span>
+                                <span></span>
+                              </div>
+                            </div>
 
-                {/* Thumbnail */}
-                <td className="td-thumbnail">
-                  {row.asset.thumbnail_url ? (
-                    <img
-                      src={row.asset.thumbnail_url}
-                      alt={row.asset.asset.name}
-                      className="thumbnail-img"
-                      onClick={() => setPreviewImage({ 
-                        url: row.asset.thumbnail_url!, 
-                        name: row.asset.asset.name 
-                      })}
-                    />
-                  ) : (
-                    <div className="thumbnail-placeholder">
-                      {row.asset.asset.asset_type === 'VID' ? '🎬' : '🖼️'}
-                    </div>
-                  )}
-                </td>
+                            {/* Thumbnail */}
+                            <div className="td-cell td-thumbnail">
+                              {asset.thumbnail_url ? (
+                                <img
+                                  src={asset.thumbnail_url}
+                                  alt={asset.asset.name}
+                                  className="thumbnail-img"
+                                  onClick={() => setPreviewImage({ 
+                                    url: asset.thumbnail_url!, 
+                                    name: asset.asset.name 
+                                  })}
+                                />
+                              ) : (
+                                <div className="thumbnail-placeholder">
+                                  {asset.asset.asset_type === 'VID' ? '🎬' : '🖼️'}
+                                </div>
+                              )}
+                            </div>
 
-                {/* Old File Name */}
-                <td className="td-oldfile">
-                  <code className="filename-text">{row.asset.asset.name}</code>
-                </td>
+                            {/* Old File Name */}
+                            <div className="td-cell td-oldfile">
+                              <code className="filename-text">{asset.asset.name}</code>
+                            </div>
 
-                {/* Dimensions */}
-                <td className="td-dimensions">
-                  <span className="dimensions-text">
-                    {row.asset.metadata.width}×{row.asset.metadata.height}
-                  </span>
-                </td>
+                            {/* Dimensions */}
+                            <div className="td-cell td-dimensions">
+                              <span className="dimensions-text">
+                                {asset.metadata.width}×{asset.metadata.height}
+                              </span>
+                            </div>
 
-                {/* Placement */}
-                <td className="td-placement">
-                  <span className={`badge ${getPlacementBadgeClass(row.asset.placement)}`}>
-                    {row.asset.placement.toUpperCase()}
-                  </span>
-                </td>
+                            {/* Placement */}
+                            <div className="td-cell td-placement">
+                              <span className={`badge ${getPlacementBadgeClass(asset.placement)}`}>
+                                {asset.placement.toUpperCase()}
+                              </span>
+                            </div>
 
-                {/* Format - show asset's own type (backend sends 'VID' or 'IMG' directly) */}
-                <td className="td-format">
-                  <span className={`badge ${getFormatBadgeClass(row.asset.asset.asset_type)}`}>
-                    {row.asset.asset.asset_type}
-                  </span>
-                </td>
+                            {/* Format */}
+                            <div className="td-cell td-format">
+                              <span className={`badge ${getFormatBadgeClass(group.group_type === 'carousel' ? 'CAR' : asset.asset.asset_type)}`}>
+                                {group.group_type === 'carousel' ? 'CAR' : asset.asset.asset_type}
+                              </span>
+                            </div>
 
-                {/* Group-level fields */}
-                {isFirstInGroup ? (
-                  <>
-                    <td className="td-campaign" rowSpan={assetsInGroup}>
-                      <input
-                        type="text"
-                        value={row.group.campaign}
-                        onChange={e => handleFieldChange(row.group.id, 'campaign', e.target.value)}
-                        className="table-input"
-                      />
-                    </td>
-                    <td className="td-product" rowSpan={assetsInGroup}>
-                      <input
-                        type="text"
-                        value={row.group.product}
-                        onChange={e => handleFieldChange(row.group.id, 'product', e.target.value)}
-                        placeholder="Product..."
-                        className="table-input"
-                      />
-                    </td>
-                    <td className="td-angle" rowSpan={assetsInGroup}>
-                      <input
-                        type="text"
-                        value={row.group.angle}
-                        onChange={e => handleFieldChange(row.group.id, 'angle', e.target.value)}
-                        placeholder="Angle..."
-                        className="table-input"
-                      />
-                    </td>
-                    <td className="td-hook" rowSpan={assetsInGroup}>
-                      <input
-                        type="text"
-                        value={row.group.hook}
-                        onChange={e => handleFieldChange(row.group.id, 'hook', e.target.value)}
-                        placeholder="Hook..."
-                        className="table-input"
-                      />
-                    </td>
-                    <td className="td-creator" rowSpan={assetsInGroup}>
-                      <input
-                        type="text"
-                        value={row.group.creator}
-                        onChange={e => handleFieldChange(row.group.id, 'creator', e.target.value)}
-                        placeholder="Creator..."
-                        className="table-input"
-                      />
-                    </td>
-                    <td className="td-offer" rowSpan={assetsInGroup}>
-                      <label className="checkbox-container">
-                        <input
-                          type="checkbox"
-                          checked={row.group.offer}
-                          onChange={e => handleFieldChange(row.group.id, 'offer', e.target.checked)}
-                        />
-                      </label>
-                    </td>
-                    <td className="td-newname" rowSpan={assetsInGroup}>
-                      <code className="newname-preview">{generateAdName(row.group)}</code>
-                    </td>
-                  </>
-                ) : null}
+                            {/* Group-level fields - show inputs only for first asset, empty placeholder for others */}
+                            <div className="td-cell td-campaign">
+                              {isFirstInGroup && (
+                                <input
+                                  type="text"
+                                  value={group.campaign}
+                                  onChange={e => handleFieldChange(group.id, 'campaign', e.target.value)}
+                                  className="table-input"
+                                />
+                              )}
+                            </div>
+                            <div className="td-cell td-product">
+                              {isFirstInGroup && (
+                                <input
+                                  type="text"
+                                  value={group.product}
+                                  onChange={e => handleFieldChange(group.id, 'product', e.target.value)}
+                                  placeholder="Product..."
+                                  className="table-input"
+                                />
+                              )}
+                            </div>
+                            <div className="td-cell td-angle">
+                              {isFirstInGroup && (
+                                <input
+                                  type="text"
+                                  value={group.angle}
+                                  onChange={e => handleFieldChange(group.id, 'angle', e.target.value)}
+                                  placeholder="Angle..."
+                                  className="table-input"
+                                />
+                              )}
+                            </div>
+                            <div className="td-cell td-hook">
+                              {isFirstInGroup && (
+                                <input
+                                  type="text"
+                                  value={group.hook}
+                                  onChange={e => handleFieldChange(group.id, 'hook', e.target.value)}
+                                  placeholder="Hook..."
+                                  className="table-input"
+                                />
+                              )}
+                            </div>
+                            <div className="td-cell td-creator">
+                              {isFirstInGroup && (
+                                <input
+                                  type="text"
+                                  value={group.creator}
+                                  onChange={e => handleFieldChange(group.id, 'creator', e.target.value)}
+                                  placeholder="Creator..."
+                                  className="table-input"
+                                />
+                              )}
+                            </div>
+                            <div className="td-cell td-offer">
+                              {isFirstInGroup && (
+                                <label className="checkbox-container">
+                                  <input
+                                    type="checkbox"
+                                    checked={group.offer}
+                                    onChange={e => handleFieldChange(group.id, 'offer', e.target.checked)}
+                                  />
+                                </label>
+                              )}
+                            </div>
+                            <div className="td-cell td-newname">
+                              {isFirstInGroup && (
+                                <code className="newname-preview">{generateAdName(group)}</code>
+                              )}
+                            </div>
 
-                {/* New File Name */}
-                <td className="td-newfile">
-                  <code className="filename-text">{generateNewFileName(row.group, row.asset)}</code>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+                            {/* New File Name - Double-click to edit */}
+                            <div className="td-cell td-newfile">
+                              {editingAssetId === asset.asset.id ? (
+                                <input
+                                  type="text"
+                                  value={editValue}
+                                  onChange={e => setEditValue(e.target.value)}
+                                  onBlur={() => handleFilenameSave(group.id, asset.asset.id)}
+                                  onKeyDown={e => handleFilenameKeyDown(e, group.id, asset.asset.id)}
+                                  className="filename-edit-input"
+                                  autoFocus
+                                />
+                              ) : (
+                                <code 
+                                  className={`filename-text ${duplicateFilenames.has(generateNewFileName(group, asset, assetIndex)) ? 'duplicate' : ''} ${asset.custom_filename ? 'custom' : ''}`}
+                                  onDoubleClick={() => handleFilenameDoubleClick(asset.asset.id, generateNewFileName(group, asset, assetIndex))}
+                                  title="Double-click to edit"
+                                >
+                                  {generateNewFileName(group, asset, assetIndex)}
+                                </code>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                      </Draggable>
+                    );
+                  })}
+                  {provided.placeholder}
+                </div>
+              )}
+            </Droppable>
+          ))}
+        </div>
+      </DragDropContext>
 
       <style>{`
         .asset-table-container {
           overflow-x: auto;
+          overflow-y: auto;
+          max-height: calc(100vh - 200px);
           background: var(--bg-card);
           border: 1px solid var(--border-color);
           border-radius: var(--radius-lg);
           position: relative;
-          max-width: 100%;
         }
 
         .preview-overlay {
@@ -326,162 +450,141 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
           font-size: 0.875rem;
         }
 
-        .asset-table {
-          width: max-content;
-          min-width: 100%;
-          border-collapse: collapse;
-          font-size: 0.8125rem;
-          table-layout: auto;
-        }
-
-        .asset-table thead {
+        /* Table-like grid layout */
+        .table-header {
+          display: grid;
+          grid-template-columns: 40px 56px 140px 90px 70px 60px 100px 100px 100px 100px 100px 50px 180px 160px;
           background: var(--bg-tertiary);
           position: sticky;
           top: 0;
-          z-index: 10;
-        }
-
-        .asset-table th {
-          padding: 0.5rem 0.75rem;
-          text-align: left;
-          font-weight: 600;
-          font-size: 0.7rem;
-          color: var(--text-secondary);
+          z-index: 20;
           border-bottom: 2px solid var(--border-color);
-          white-space: nowrap;
-          background: var(--bg-tertiary);
         }
 
-        .asset-table td {
-          padding: 0.5rem 0.75rem;
-          border-bottom: 1px solid var(--border-color);
-          vertical-align: top;
-          white-space: nowrap;
-          background: var(--bg-card);
-        }
-
-        .asset-row.group-continue td {
-          background: rgba(22, 27, 34, 0.97);
-        }
-
-        /* Keep sticky columns opaque for continued rows */
-        .asset-row.group-continue td.td-move,
-        .asset-row.group-continue td.td-thumbnail,
-        .asset-row.group-continue td.td-dimensions,
-        .asset-row.group-continue td.td-placement,
-        .asset-row.group-continue td.td-format {
-          background: #161b22;
-        }
-
-        /* Move dropdown column */
-        .th-move {
-          width: 48px;
-          min-width: 48px;
-        }
-
-        .td-move {
-          width: 48px;
-          min-width: 48px;
-          text-align: center;
-        }
-
-        .move-select {
-          width: 40px;
-          padding: 0.25rem;
+        .th-cell {
+          padding: 0.6rem 0.5rem;
           font-size: 0.7rem;
+          font-weight: 600;
+          color: var(--text-secondary);
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+        }
+
+        .table-body {
+          display: flex;
+          flex-direction: column;
+        }
+
+        .group-section {
+          border-bottom: 2px solid var(--accent-primary);
+          transition: background 0.2s ease;
+        }
+
+        .group-section.drag-over {
+          background: rgba(88, 166, 255, 0.08);
+        }
+
+        .group-header-bar {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          padding: 0.5rem 0.75rem;
+          background: rgba(88, 166, 255, 0.1);
+          border-bottom: 1px solid var(--border-color);
+        }
+
+        .group-badge {
+          font-weight: 700;
+          font-size: 0.75rem;
+          color: var(--accent-primary);
+        }
+
+        .group-type-badge {
+          font-size: 0.65rem;
+          padding: 2px 6px;
           background: var(--bg-tertiary);
-          border: 1px solid var(--border-color);
           border-radius: var(--radius-sm);
+          color: var(--text-secondary);
+          text-transform: capitalize;
+        }
+
+        .group-count {
+          font-size: 0.65rem;
           color: var(--text-muted);
-          cursor: pointer;
-          appearance: none;
-          text-align: center;
-          transition: all 0.15s;
         }
 
-        .move-select:hover {
+        .asset-row {
+          display: grid;
+          grid-template-columns: 40px 56px 140px 90px 70px 60px 100px 100px 100px 100px 100px 50px 180px 160px;
+          border-bottom: 1px solid var(--border-color);
+          background: var(--bg-card);
+          transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.15s ease;
+        }
+
+        .asset-row:hover {
+          background: rgba(88, 166, 255, 0.04);
+        }
+
+        .asset-row.dragging {
           background: var(--bg-secondary);
-          border-color: var(--accent-primary);
-          color: var(--text-primary);
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 0 1px var(--accent-primary);
+          border-radius: var(--radius-sm);
+          z-index: 100;
         }
 
-        .move-select:focus {
-          outline: none;
-          border-color: var(--accent-primary);
-          box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.15);
-        }
-
-        .move-select option {
-          background: var(--bg-secondary);
-          color: var(--text-primary);
+        .td-cell {
           padding: 0.5rem;
+          display: flex;
+          align-items: center;
+          min-height: 56px;
+          overflow: hidden;
         }
 
-        /* Sticky first 5 columns */
-        .th-move, .td-move {
-          position: sticky;
-          left: 0;
-          z-index: 2;
-          background: var(--bg-secondary);
+
+        /* Drag handle */
+        .td-drag {
+          cursor: grab;
+          justify-content: center;
         }
 
-        .th-thumbnail, .td-thumbnail {
-          position: sticky;
-          left: 48px;
-          z-index: 2;
-          background: var(--bg-secondary);
+        .td-drag:active {
+          cursor: grabbing;
         }
 
-        .th-dimensions, .td-dimensions {
-          position: sticky;
-          left: 120px;
-          z-index: 2;
-          background: var(--bg-secondary);
+        .drag-handle {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+          padding: 8px 4px;
+          border-radius: var(--radius-sm);
+          transition: background 0.15s ease;
         }
 
-        .th-placement, .td-placement {
-          position: sticky;
-          left: 210px;
-          z-index: 2;
-          background: var(--bg-secondary);
+        .drag-handle span {
+          display: flex;
+          gap: 3px;
         }
 
-        .th-format, .td-format {
-          position: sticky;
-          left: 280px;
-          z-index: 2;
-          border-right: 2px solid var(--border-color);
-          background: var(--bg-secondary);
+        .drag-handle span::before,
+        .drag-handle span::after {
+          content: '';
+          width: 4px;
+          height: 4px;
+          background: var(--text-muted);
+          border-radius: 50%;
+          transition: background 0.15s ease;
         }
 
-        .asset-table thead th.th-move,
-        .asset-table thead th.th-thumbnail,
-        .asset-table thead th.th-dimensions,
-        .asset-table thead th.th-placement,
-        .asset-table thead th.th-format {
-          z-index: 12;
+        .td-drag:hover .drag-handle {
           background: var(--bg-tertiary);
         }
 
-        .asset-row.group-start {
-          border-top: 2px solid var(--accent-primary);
-        }
-
-        .asset-row.group-start td {
-          padding-top: 0.75rem;
-        }
-
-        .asset-row:hover td {
-          background: rgba(88, 166, 255, 0.05);
-        }
-
-        /* Keep sticky columns opaque on hover */
-        .asset-row:hover td.td-move,
-        .asset-row:hover td.td-thumbnail,
-        .asset-row:hover td.td-dimensions,
-        .asset-row:hover td.td-placement,
-        .asset-row:hover td.td-format {
-          background: #1a2029;
+        .td-drag:hover .drag-handle span::before,
+        .td-drag:hover .drag-handle span::after {
+          background: var(--accent-primary);
         }
 
         /* Thumbnail */
@@ -519,7 +622,71 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
           white-space: nowrap;
         }
 
+        .filename-text {
+          font-family: var(--font-mono);
+          font-size: 0.65rem;
+          color: var(--text-secondary);
+          word-break: break-all;
+          line-height: 1.3;
+        }
+
+        .td-newfile .filename-text {
+          color: #4ade80;
+          font-weight: 600;
+          font-size: 0.7rem;
+          cursor: pointer;
+          padding: 4px 6px;
+          border-radius: var(--radius-sm);
+          transition: background 0.15s ease;
+        }
+
+        .td-newfile .filename-text:hover {
+          background: rgba(74, 222, 128, 0.1);
+        }
+
+        .td-newfile .filename-text.duplicate {
+          color: #f87171;
+          background: rgba(248, 113, 113, 0.15);
+          border: 1px solid rgba(248, 113, 113, 0.3);
+        }
+
+        .td-newfile .filename-text.custom {
+          color: #fbbf24;
+          font-style: italic;
+        }
+
+        .td-newfile .filename-text.duplicate.custom {
+          color: #f87171;
+        }
+
+        .filename-edit-input {
+          width: 100%;
+          padding: 4px 6px;
+          font-family: var(--font-mono);
+          font-size: 0.7rem;
+          font-weight: 600;
+          background: var(--bg-tertiary);
+          border: 2px solid var(--accent-primary);
+          border-radius: var(--radius-sm);
+          color: var(--text-primary);
+          outline: none;
+        }
+
+        .filename-edit-input:focus {
+          box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.2);
+        }
+
         /* Badges */
+        .badge {
+          display: inline-block;
+          padding: 3px 8px;
+          font-size: 0.65rem;
+          font-weight: 600;
+          border-radius: var(--radius-sm);
+          text-transform: uppercase;
+          letter-spacing: 0.3px;
+        }
+
         .badge-format-vid {
           background: rgba(163, 113, 247, 0.2);
           color: var(--accent-purple);
@@ -588,8 +755,7 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
 
         /* New ad name */
         .td-newname {
-          white-space: normal !important;
-          min-width: 200px;
+          min-width: 180px;
         }
 
         .newname-preview {
@@ -604,21 +770,6 @@ export default function AssetTable({ groups, onUpdateGroup, onRegroupAsset }: As
           border-radius: var(--radius-sm);
           word-break: break-all;
           line-height: 1.4;
-        }
-
-        /* File names */
-        .filename-text {
-          font-family: var(--font-mono);
-          font-size: 0.65rem;
-          color: var(--text-secondary);
-          word-break: break-all;
-        }
-
-        .td-newfile .filename-text {
-          color: #4ade80;
-          font-weight: 600;
-          font-size: 0.7rem;
-          letter-spacing: 0.01em;
         }
 
       `}</style>

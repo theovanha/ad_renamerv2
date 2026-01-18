@@ -189,12 +189,34 @@ export default function ReviewPage() {
     }
   }, []);
 
-  const handleRegroupAsset = useCallback(async (assetId: string, targetGroupId: string | null) => {
+  const handleRegroupAsset = useCallback(async (assetId: string, targetGroupId: string | null, destinationIndex?: number) => {
     try {
-      const newData = await api.regroupAsset(assetId, targetGroupId);
+      const newData = await api.regroupAsset(assetId, targetGroupId, destinationIndex);
       setData(newData);
     } catch (err) {
       console.error('Failed to regroup asset:', err);
+    }
+  }, []);
+
+  const handleReorderAsset = useCallback(async (groupId: string, assetId: string, newIndex: number) => {
+    try {
+      await api.reorderAsset(groupId, assetId, newIndex);
+      // Refresh data
+      const newData = await api.getGroups();
+      setData(newData);
+    } catch (err) {
+      console.error('Failed to reorder asset:', err);
+    }
+  }, []);
+
+  const handleUpdateAssetFilename = useCallback(async (groupId: string, assetId: string, customFilename: string) => {
+    try {
+      await api.updateAsset(groupId, assetId, { custom_filename: customFilename });
+      // Refresh data
+      const newData = await api.getGroups();
+      setData(newData);
+    } catch (err) {
+      console.error('Failed to update filename:', err);
     }
   }, []);
   
@@ -471,6 +493,8 @@ export default function ReviewPage() {
         groups={sortedGroups}
         onUpdateGroup={handleGroupUpdate}
         onRegroupAsset={handleRegroupAsset}
+        onReorderAsset={handleReorderAsset}
+        onUpdateAssetFilename={handleUpdateAssetFilename}
       />
       
       {data.ungrouped.length > 0 && (
