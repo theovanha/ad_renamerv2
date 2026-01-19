@@ -87,6 +87,7 @@ export default function BulkToolbar({
               <select value={replaceField} onChange={e => setReplaceField(e.target.value)}>
                 <option value="product">Product</option>
                 <option value="angle">Angle</option>
+                <option value="creator">Creator</option>
                 <option value="offer">Offer</option>
               </select>
             </div>
@@ -124,6 +125,7 @@ export default function BulkToolbar({
               <select value={applyField} onChange={e => setApplyField(e.target.value)}>
                 <option value="product">Product</option>
                 <option value="angle">Angle</option>
+                <option value="creator">Creator</option>
                 <option value="offer">Offer</option>
               </select>
             </div>
@@ -145,7 +147,7 @@ export default function BulkToolbar({
                   type="text"
                   value={applyValue}
                   onChange={e => setApplyValue(e.target.value)}
-                  placeholder="New value"
+                  placeholder={applyField === 'creator' ? 'Creator name...' : 'New value'}
                 />
               )}
             </div>

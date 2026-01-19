@@ -23,6 +23,7 @@ function BulkApplyToolbar({
 }) {
   const [campaign, setCampaign] = useState('');
   const [product, setProduct] = useState('');
+  const [creator, setCreator] = useState('');
   const [offer, setOffer] = useState(false);
   const [startNumber, setStartNumber] = useState(currentStartNumber);
 
@@ -81,6 +82,23 @@ function BulkApplyToolbar({
           className="bulk-btn"
           onClick={() => { onApply('product', product); }}
           disabled={!product}
+        >
+          Apply
+        </button>
+      </div>
+
+      <div className="bulk-field">
+        <input
+          type="text"
+          value={creator}
+          onChange={e => setCreator(e.target.value)}
+          placeholder="Creator"
+          className="bulk-input"
+        />
+        <button 
+          className="bulk-btn"
+          onClick={() => { onApply('creator', creator); }}
+          disabled={!creator}
         >
           Apply
         </button>
@@ -380,6 +398,14 @@ export default function ReviewPage() {
           </button>
           <span className="mini-brand">VANHA AD RENAMER</span>
         </div>
+        <div className="top-right">
+          <button 
+            className={`btn-debug ${isRecording ? 'recording' : ''}`} 
+            onClick={handleToggleRecording}
+          >
+            {isRecording ? '⏹ Stop' : '🔴 Debug'}
+          </button>
+        </div>
       </div>
       
       <div className="review-actions-bar">
@@ -410,13 +436,6 @@ export default function ReviewPage() {
             title="Copy all ad names (one per line for Google Sheets)"
           >
             📋 Copy Ad Names
-          </button>
-          
-          <button 
-            className={`btn-debug ${isRecording ? 'recording' : ''}`} 
-            onClick={handleToggleRecording}
-          >
-            {isRecording ? '⏹ Stop' : '🔴 Debug'}
           </button>
           
           <button
@@ -531,6 +550,12 @@ export default function ReviewPage() {
           align-items: center;
           gap: var(--space-md);
         }
+
+        .top-right {
+          display: flex;
+          align-items: center;
+          gap: var(--space-sm);
+        }
         
         .btn-home {
           padding: 0.3rem 0.6rem;
@@ -577,38 +602,39 @@ export default function ReviewPage() {
         .bulk-toolbar {
           display: flex;
           align-items: center;
-          gap: var(--space-md);
-          padding: var(--space-md) var(--space-lg);
+          gap: var(--space-sm);
+          padding: var(--space-sm) var(--space-md);
           background: var(--bg-secondary);
           border: 1px solid var(--border-color);
           border-radius: var(--radius-md);
           margin-bottom: var(--space-md);
-          flex-wrap: wrap;
+          flex-wrap: nowrap;
         }
 
         .bulk-divider {
           width: 1px;
-          height: 28px;
+          height: 24px;
           background: var(--border-color);
-          margin: 0 var(--space-md);
+          margin: 0 var(--space-xs);
         }
 
         .bulk-label {
-          font-size: 0.8rem;
+          font-size: 0.7rem;
           font-weight: 600;
           color: var(--text-secondary);
+          white-space: nowrap;
         }
 
         .bulk-field {
           display: flex;
           align-items: center;
-          gap: var(--space-sm);
+          gap: 4px;
         }
 
         .bulk-input {
-          width: 140px;
-          padding: 0.4rem 0.6rem;
-          font-size: 0.8rem;
+          width: 100px;
+          padding: 0.35rem 0.5rem;
+          font-size: 0.75rem;
           background: var(--bg-tertiary);
           border: 1px solid var(--border-color);
           border-radius: var(--radius-sm);
@@ -616,7 +642,7 @@ export default function ReviewPage() {
         }
 
         .bulk-input-number {
-          width: 70px;
+          width: 50px;
           text-align: center;
         }
 
@@ -630,8 +656,8 @@ export default function ReviewPage() {
         }
 
         .bulk-btn {
-          padding: 0.4rem 0.75rem;
-          font-size: 0.75rem;
+          padding: 0.3rem 0.5rem;
+          font-size: 0.7rem;
           font-weight: 500;
           background: var(--bg-tertiary);
           color: var(--text-secondary);
@@ -639,6 +665,7 @@ export default function ReviewPage() {
           border-radius: var(--radius-sm);
           cursor: pointer;
           transition: all 0.15s;
+          white-space: nowrap;
         }
 
         .bulk-btn:hover:not(:disabled) {
@@ -654,15 +681,16 @@ export default function ReviewPage() {
         .bulk-checkbox {
           display: flex;
           align-items: center;
-          gap: var(--space-xs);
-          font-size: 0.8rem;
+          gap: 4px;
+          font-size: 0.7rem;
           color: var(--text-secondary);
           cursor: pointer;
+          white-space: nowrap;
         }
 
         .bulk-checkbox input {
-          width: 16px;
-          height: 16px;
+          width: 14px;
+          height: 14px;
           accent-color: var(--accent-primary);
         }
 
